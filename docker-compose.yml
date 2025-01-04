@@ -1,0 +1,82 @@
+services:
+  # dbt container for running dbt commands
+  dbt:
+    build:
+      context: .
+      dockerfile: Dockerfile  # Build dbt image from Dockerfile
+    container_name: dbt-container
+    environment:
+      - SNOWFLAKE_ACCOUNT=${SNOWFLAKE_ACCOUNT}
+      - SNOWFLAKE_USER=${SNOWFLAKE_USER}
+      - SNOWFLAKE_PASSWORD=${SNOWFLAKE_PASSWORD}
+      - SNOWFLAKE_ROLE=${SNOWFLAKE_ROLE}
+      - SNOWFLAKE_WAREHOUSE=${SNOWFLAKE_WAREHOUSE}
+      - SNOWFLAKE_DATABASE=${SNOWFLAKE_DATABASE}
+      - SNOWFLAKE_SCHEMA=${SNOWFLAKE_SCHEMA}  # If schema is needed later
+    volumes:
+      - ./dbt:/fantasy-football-challenge/dbt  # Mount the dbt directory
+    working_dir: /fantasy-football-challenge/dbt  # Set working directory for dbt inside the container
+    command: ["dbt", "run"]  # Default command to run dbt models
+
+  # Airflow container
+  airflow-webserver:
+    image: apache/airflow:2.4.0
+    container_name: airflow-webserver
+    environment:
+      - AIRFLOW__CORE__SQL_ALCHEMY_CONN=postgresql://airflow:airflow@postgres/airflow  # PostgreSQL connection string for Airflow DB
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__WEBSERVER__SECRET_KEY=${AIRFLOW_SECRET_KEY}
+      - AIRFLOW__WEBSERVER__WORKERS=4
+      - AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=False
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      - AIRFLOW__WEBSERVER__USERNAME=${AIRFLOW_USERNAME}  # Airflow Admin username
+      - AIRFLOW__WEBSERVER__PASSWORD=${AIRFLOW_PASSWORD}  # Airflow Admin password
+    volumes:
+      - ./airflow:/opt/airflow  # Mount Airflow DAGs to container
+      - ./dbt:/fantasy-football-challenge/dbt  # Mount dbt models to Airflow container (for triggering dbt commands)
+      - ./init_airflow.sh:/opt/airflow/init_airflow.sh  # Mount the init script
+    ports:
+      - "8080:8080"  # Expose Airflow webserver on localhost:8080
+    depends_on:
+      - dbt  # Ensure dbt service is up before starting Airflow
+    command: ["bash", "/opt/airflow/init_airflow.sh"]  # Run the init script to create admin user and start webserver
+
+  airflow-scheduler:
+    image: apache/airflow:2.4.0
+    container_name: airflow-scheduler
+    environment:
+      - AIRFLOW__CORE__SQL_ALCHEMY_CONN=postgresql://airflow:airflow@postgres/airflow
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+    volumes:
+      - ./airflow:/opt/airflow
+    depends_on:
+      - dbt  # Ensure dbt service is up before starting the scheduler
+    command: ["bash", "-c", "airflow scheduler"]  # Start the Airflow scheduler
+
+  airflow-worker:
+    image: apache/airflow:2.4.0
+    container_name: airflow-worker
+    environment:
+      - AIRFLOW__CORE__SQL_ALCHEMY_CONN=postgresql://airflow:airflow@postgres/airflow
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+    volumes:
+      - ./airflow:/opt/airflow
+    depends_on:
+      - dbt  # Ensure dbt service is up before starting the worker
+    command: ["bash", "-c", "airflow worker"]  # Start the Airflow worker
+
+  # PostgreSQL container for Airflow's metadata database
+  postgres:
+    image: postgres:latest  # PostgreSQL image for Airflow metadata database
+    container_name: postgres
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    ports:
+      - "5432:5432"  # Expose PostgreSQL on port 5432
+    volumes:
+      - airflow-db:/var/lib/postgresql/data  # Persist PostgreSQL data
+
+volumes:
+  airflow-db:
