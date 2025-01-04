@@ -1,9 +1,10 @@
 # Makefile
 
-# Build and run the dbt container
 dbt-docker:
 	docker-compose up -d dbt
-	docker logs -f dbt-container
+	@echo "Waiting for dbt container to be ready..."
+	sleep 5 # Wait for a few seconds to ensure the container is up
+	docker exec -it dbt-container bash
 
 # Build and start Airflow locally
 local-airflow:
